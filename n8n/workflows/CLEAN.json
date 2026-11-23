@@ -1,0 +1,178 @@
+{
+  "name": "CLEAN",
+  "nodes": [
+    {
+      "parameters": {
+        "queue": "openmeteo-raw",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.rabbitmqTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "5ebb8b59-1540-4b42-88e8-35e85a088eca",
+      "name": "RabbitMQ Trigger",
+      "credentials": {
+        "rabbitmq": {
+          "id": "J9VdgPSYAXXcvoJu",
+          "name": "RabbitMQ account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Nivel 1: extraer el mensaje de RabbitMQ\nconst mensaje = JSON.parse($input.item.json.content);\n\n// Nivel 2: extraer los datos de Open-Meteo\nconst content = JSON.parse(mensaje.content);\n\nconst date = mensaje.date;\nconst dateForFile = date.replace(/-/g, '_');\n\n// Convertir a formato largo: una fila por hora\nconst times = content.hourly.time;\nconst variables = Object.keys(content.hourly).filter(k => k !== 'time');\n\nconst rows = times.map((time, i) => {\n  const row = { datetime: time, source: 'openmeteo', date: date };\n  variables.forEach(v => {\n    row[v] = content.hourly[v][i];\n  });\n  return row;\n});\n\nreturn [{\n  json: {\n    source: mensaje.source,\n    date: date,\n    path: `openmeteo/${dateForFile}.json`,\n    content: JSON.stringify(rows)\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "108a4769-1f0d-460e-9403-51f8b9a15327",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "bucketName": "clean-zone",
+        "fileName": "={{ $json.path }}",
+        "binaryData": false,
+        "fileContent": "={{ $json.content }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.s3",
+      "typeVersion": 1,
+      "position": [
+        416,
+        0
+      ],
+      "id": "a444319e-1314-4dca-b822-6e6c70f61ee5",
+      "name": "Upload a file",
+      "credentials": {
+        "s3": {
+          "id": "1wUY8SSMwb4AmOE3",
+          "name": "S3 account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "queue": "madrid-raw",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.rabbitmqTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        192
+      ],
+      "id": "e6e7a85a-0d2c-4484-92f3-5e3a32d09147",
+      "name": "RabbitMQ Trigger1",
+      "credentials": {
+        "rabbitmq": {
+          "id": "J9VdgPSYAXXcvoJu",
+          "name": "RabbitMQ account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Nivel 1: extraer el mensaje de RabbitMQ\nconst mensaje = JSON.parse($input.item.json.content);\n\n// Nivel 2: el content es otro JSON con campo \"data\"\nconst nivel2 = JSON.parse(mensaje.content);\n\n// Nivel 3: el CSV real está en nivel2.data\nconst csvText = nivel2.data;\n\nconst date = mensaje.date;\nconst dateForFile = date.replace(/-/g, '_');\n\n// Parsear CSV con separador \";\" y saltos de línea Windows\nconst lines = csvText.trim().split(/\\r?\\n/);\nconst headers = lines[0].split(';').map(h => h.trim());\n\nconst rows = [];\nfor (let i = 1; i < lines.length; i++) {\n  if (!lines[i].trim()) continue;\n  const values = lines[i].split(';').map(v => v.trim());\n  const row = {};\n  headers.forEach((h, idx) => {\n    row[h] = values[idx] ?? null;\n  });\n  row.source = 'madrid';\n  row.date = date;\n  rows.push(row);\n}\n\nreturn [{\n  json: {\n    source: mensaje.source,\n    date: date,\n    path: `madrid/${dateForFile}.json`,\n    content: JSON.stringify(rows)\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        192
+      ],
+      "id": "c0aa0169-8584-439a-a6e7-199772f4e580",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "bucketName": "clean-zone",
+        "fileName": "={{ $json.path }}",
+        "binaryData": false,
+        "fileContent": "={{ $json.content }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.s3",
+      "typeVersion": 1,
+      "position": [
+        416,
+        192
+      ],
+      "id": "0b097f94-8aff-4614-a65f-2cac4fa7afd3",
+      "name": "Upload a file1",
+      "credentials": {
+        "s3": {
+          "id": "1wUY8SSMwb4AmOE3",
+          "name": "S3 account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "RabbitMQ Trigger": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Upload a file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RabbitMQ Trigger1": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Upload a file1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "091038d5-a5bb-4d53-a2c3-b7a0d9a21008",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "724e476bc2b343244a2ec56d4f5abc230310acf8f7c8074150195de4373cde0f"
+  },
+  "id": "vq9hqQLraYt6WHzj",
+  "tags": []
+}

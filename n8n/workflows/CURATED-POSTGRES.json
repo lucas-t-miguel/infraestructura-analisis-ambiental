@@ -1,0 +1,301 @@
+{
+  "name": "CURATED-POSTGRES",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "618a1b1f-edeb-473c-af81-0547e7731668",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "jsCode": "const yesterday = new Date();\nyesterday.setDate(yesterday.getDate() - 1);\nconst date = yesterday.toISOString().split('T')[0]; // 2026-05-07\nconst parts = date.split('-');\nconst curatedPath = parts[0] + '/' + parts[1] + '/' + parts[2] + '/datos.csv';\n\nreturn [{\n  json: {\n    date: date,\n    curatedUrl: `http://minio:9000/curated-zone/${curatedPath}`\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "e06da053-37a3-449e-a246-d5408dd43ffa",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.curatedUrl }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        416,
+        0
+      ],
+      "id": "833dfbcd-dd46-41be-ac7e-266bf6971db6",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "jsCode": "const csvText = $input.item.json.data;\n\nconst lines = csvText.trim().split('\\n');\nconst headers = lines[0].split(',');\n\nconst rows = [];\nfor (let i = 1; i < lines.length; i++) {\n  const values = lines[i].split(',');\n  if (values.length !== headers.length) continue;\n\n  const row = {};\n  headers.forEach((h, idx) => {\n    row[h.trim()] = values[idx] ? values[idx].trim() : null;\n  });\n  rows.push({ json: row });\n}\n\nreturn rows;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        0
+      ],
+      "id": "60489273-c5a9-4190-ac6b-9619414437c9",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO dw.stg_curated_csv\n  (fecha, hora, temperatura_c, humedad_pct, viento_kmh,\n   presion_hpa, precipitacion_mm, madrid_magnitud, madrid_estacion)\nVALUES\n  ('{{ $json.fecha }}', {{ $json.hora }},\n   NULLIF(NULLIF('{{ $json.temperatura_c }}', ''), 'null')::numeric,\n   NULLIF(NULLIF('{{ $json.humedad_pct }}', ''), 'null')::numeric,\n   NULLIF(NULLIF('{{ $json.viento_kmh }}', ''), 'null')::numeric,\n   NULLIF(NULLIF('{{ $json.presion_hpa }}', ''), 'null')::numeric,\n   NULLIF(NULLIF('{{ $json.precipitacion_mm }}', ''), 'null')::numeric,\n   NULLIF(NULLIF('{{ $json.madrid_magnitud }}', ''), 'null'),\n   NULLIF(NULLIF('{{ $json.madrid_estacion }}', ''), 'null'));",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        832,
+        0
+      ],
+      "id": "f6454365-e7e7-4348-85aa-aae07bf66c45",
+      "name": "Execute a SQL query",
+      "credentials": {
+        "postgres": {
+          "id": "1uFHuUzz9L7B7eNp",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO dw.dim_tiempo (\n    fecha, hora, anio, trimestre, mes, nombre_mes,\n    semana_anio, dia_mes, dia_semana, nombre_dia_semana,\n    es_fin_semana, franja_horaria, etiqueta_hora\n)\nSELECT DISTINCT\n    s.fecha,\n    s.hora,\n    EXTRACT(YEAR FROM s.fecha)::smallint,\n    EXTRACT(QUARTER FROM s.fecha)::smallint,\n    EXTRACT(MONTH FROM s.fecha)::smallint,\n    CASE EXTRACT(MONTH FROM s.fecha)::int\n        WHEN 1 THEN 'enero'\n        WHEN 2 THEN 'febrero'\n        WHEN 3 THEN 'marzo'\n        WHEN 4 THEN 'abril'\n        WHEN 5 THEN 'mayo'\n        WHEN 6 THEN 'junio'\n        WHEN 7 THEN 'julio'\n        WHEN 8 THEN 'agosto'\n        WHEN 9 THEN 'septiembre'\n        WHEN 10 THEN 'octubre'\n        WHEN 11 THEN 'noviembre'\n        WHEN 12 THEN 'diciembre'\n    END,\n    EXTRACT(WEEK FROM s.fecha)::smallint,\n    EXTRACT(DAY FROM s.fecha)::smallint,\n    EXTRACT(DOW FROM s.fecha)::smallint,\n    CASE EXTRACT(DOW FROM s.fecha)::int\n        WHEN 0 THEN 'domingo'\n        WHEN 1 THEN 'lunes'\n        WHEN 2 THEN 'martes'\n        WHEN 3 THEN 'miercoles'\n        WHEN 4 THEN 'jueves'\n        WHEN 5 THEN 'viernes'\n        WHEN 6 THEN 'sabado'\n    END,\n    CASE WHEN EXTRACT(DOW FROM s.fecha)::int IN (0, 6) THEN TRUE ELSE FALSE END,\n    CASE\n        WHEN s.hora BETWEEN 6 AND 11 THEN 'manana'\n        WHEN s.hora BETWEEN 12 AND 19 THEN 'tarde'\n        ELSE 'noche'\n    END,\n    LPAD(s.hora::text, 2, '0')\nFROM dw.stg_curated_csv s\nON CONFLICT (fecha, hora) DO NOTHING;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1040,
+        0
+      ],
+      "id": "cf55be9d-9b03-479b-afe3-bc494af31898",
+      "name": "Execute a SQL query1",
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "id": "1uFHuUzz9L7B7eNp",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO dw.dim_estacion (codigo_estacion, nombre_estacion, municipio, activa)\nSELECT DISTINCT\n    COALESCE(NULLIF(NULLIF(TRIM(s.madrid_estacion), ''), 'null'), 'NA'),\n    COALESCE(NULLIF(NULLIF(TRIM(s.madrid_estacion), ''), 'null'), 'Estacion no informada'),\n    'Madrid',\n    TRUE\nFROM dw.stg_curated_csv s\nON CONFLICT (codigo_estacion) DO UPDATE\nSET nombre_estacion = EXCLUDED.nombre_estacion,\n    municipio = EXCLUDED.municipio,\n    activa = EXCLUDED.activa",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1248,
+        0
+      ],
+      "id": "9c0ede65-cadb-4c0c-a082-cef6e800fac5",
+      "name": "Execute a SQL query2",
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "id": "1uFHuUzz9L7B7eNp",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO dw.dim_magnitud (codigo_magnitud, nombre_magnitud, unidad, descripcion)\nSELECT DISTINCT\n    COALESCE(NULLIF(NULLIF(TRIM(s.madrid_magnitud), ''), 'null'), 'NA'),\n    CASE\n        WHEN NULLIF(NULLIF(TRIM(s.madrid_magnitud), ''), 'null') IS NULL THEN 'Magnitud no informada'\n        ELSE CONCAT('Magnitud ', TRIM(s.madrid_magnitud))\n    END,\n    NULL,\n    'Magnitud procedente del portal municipal'\nFROM dw.stg_curated_csv s\nON CONFLICT (codigo_magnitud) DO UPDATE\nSET nombre_magnitud = EXCLUDED.nombre_magnitud,\n    unidad = EXCLUDED.unidad,\n    descripcion = EXCLUDED.descripcion",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1456,
+        0
+      ],
+      "id": "a105bb37-0981-4787-b8b6-8b4046ee5bb9",
+      "name": "Execute a SQL query3",
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "id": "1uFHuUzz9L7B7eNp",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO dw.fact_ambiental_horaria (\n    tiempo_key, fuente_key, estacion_key, magnitud_key,\n    temperatura_c, humedad_pct, viento_kmh, presion_hpa,\n    precipitacion_mm, valor_magnitud, origen_lake_path\n)\nSELECT\n    t.tiempo_key,\n    f.fuente_key,\n    e.estacion_key,\n    m.magnitud_key,\n    s.temperatura_c,\n    s.humedad_pct,\n    s.viento_kmh,\n    s.presion_hpa,\n    s.precipitacion_mm,\n    NULL,\n    'curated-zone/datos.csv'\nFROM dw.stg_curated_csv s\nJOIN dw.dim_tiempo t ON t.fecha = s.fecha AND t.hora = s.hora\nJOIN dw.dim_fuente f ON f.codigo_fuente = 'fusion_curated'\nJOIN dw.dim_estacion e ON e.codigo_estacion = COALESCE(NULLIF(NULLIF(TRIM(s.madrid_estacion), ''), 'null'), 'NA')\nJOIN dw.dim_magnitud m ON m.codigo_magnitud = COALESCE(NULLIF(NULLIF(TRIM(s.madrid_magnitud), ''), 'null'), 'NA')\nON CONFLICT (tiempo_key, fuente_key, estacion_key, magnitud_key) DO UPDATE\nSET temperatura_c = EXCLUDED.temperatura_c,\n    humedad_pct = EXCLUDED.humedad_pct,\n    viento_kmh = EXCLUDED.viento_kmh,\n    presion_hpa = EXCLUDED.presion_hpa,\n    precipitacion_mm = EXCLUDED.precipitacion_mm,\n    valor_magnitud = EXCLUDED.valor_magnitud,\n    origen_lake_path = EXCLUDED.origen_lake_path,\n    fecha_carga = CURRENT_TIMESTAMP",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1664,
+        0
+      ],
+      "id": "f641dc25-4f09-4c34-8b8a-9c617529e33e",
+      "name": "Execute a SQL query4",
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "id": "1uFHuUzz9L7B7eNp",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DELETE FROM dw.stg_curated_csv",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1872,
+        0
+      ],
+      "id": "59dbbb0e-0d60-4652-b632-b8525d180ecd",
+      "name": "Execute a SQL query5",
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "id": "1uFHuUzz9L7B7eNp",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a SQL query": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a SQL query1": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a SQL query2": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a SQL query3": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a SQL query4": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "fe722c06-f448-46bf-83ba-0320dd4518bd",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "a88e1c1fe28527eff15c017b98f9a7f20681767a94953189f2353a50412583e8"
+  },
+  "id": "KQDNMbYWT6DH3MMC",
+  "tags": []
+}

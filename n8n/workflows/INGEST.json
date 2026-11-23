@@ -1,0 +1,313 @@
+{
+  "name": "INGEST",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -432,
+        224
+      ],
+      "id": "b63daa4c-1533-4d56-86fc-13a902dde6e7",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "jsCode": "const yesterday = new Date();\nyesterday.setDate(yesterday.getDate() - 1);\n\nconst yyyy = yesterday.getFullYear();\nconst mm = String(yesterday.getMonth() + 1).padStart(2, '0');\nconst dd = String(yesterday.getDate()).padStart(2, '0');\n\nconst dateStr = `${yyyy}-${mm}-${dd}`;\n\nreturn [{ json: { date: dateStr } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        128
+      ],
+      "id": "57aad351-52c7-4121-b175-8f39b0b1d424",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.open-meteo.com/v1/forecast?latitude=40.4168&longitude=-3.7038&hourly=temperature_2m,precipitation,windspeed_10m,relative_humidity_2m,surface_pressure&daily=sunrise,sunset&timezone=Europe%2FMadrid&start_date={{ $json.date }}&end_date={{ $json.date }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        0,
+        0
+      ],
+      "id": "5e3c29ed-a28e-40b3-8766-0d2fdddf86a8",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "url": "https://datos.madrid.es/dataset/212531-0-calidad-aire-tiempo-real/resource/212531-2-calidad-aire-tiempo-real/download/212531-2-calidad-aire-tiempo-real.csv",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        0,
+        224
+      ],
+      "id": "dcf2a7a6-27fd-464b-8f3c-e6243625b33f",
+      "name": "HTTP Request1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const yesterday = new Date();\nyesterday.setDate(yesterday.getDate() - 1);\nconst date = yesterday.toISOString().split('T')[0]; // \"2026-05-07\"\nconst dateForFile = date.replace(/-/g, '_');        // \"2026_05_07\"\n\nconst data = $input.item.json;\nconst path = `openmeteo/${dateForFile}.json`;\n\nreturn [{\n  json: {\n    source: 'openmeteo',\n    date: date,\n    path: path,\n    content: JSON.stringify(data)\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "6e2af741-8367-4bf0-9f4e-610ae0c61d69",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "bucketName": "raw-zone",
+        "fileName": "={{ $json.path }}",
+        "binaryData": false,
+        "fileContent": "={{ $json.content }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.s3",
+      "typeVersion": 1,
+      "position": [
+        416,
+        0
+      ],
+      "id": "75174c1f-025d-4228-9dec-f212db309f41",
+      "name": "Upload a file",
+      "credentials": {
+        "s3": {
+          "id": "Yw4mAGKnpRGX9NbQ",
+          "name": "S3 account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "queue": "openmeteo-raw",
+        "sendInputData": false,
+        "message": "={{ JSON.stringify($('Code in JavaScript1').item.json) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.rabbitmq",
+      "typeVersion": 1.1,
+      "position": [
+        624,
+        0
+      ],
+      "id": "9a5ff4a4-5c83-43f8-aa2c-c609c093c471",
+      "name": "RabbitMQ",
+      "credentials": {
+        "rabbitmq": {
+          "id": "VnypiDdsnXfnFUdu",
+          "name": "RabbitMQ account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const yesterday = new Date();\nyesterday.setDate(yesterday.getDate() - 1);\nconst date = yesterday.toISOString().split('T')[0];\nconst dateForFile = date.replace(/-/g, '_');\n\nconst data = $input.item.json;\nconst path = `madrid/${dateForFile}.json`;\n\nreturn [{\n  json: {\n    source: 'madrid',\n    date: date,\n    path: path,\n    content: JSON.stringify(data)\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        224
+      ],
+      "id": "822b5e7d-b04d-47b2-883b-ad42fd2424e2",
+      "name": "Code in JavaScript2"
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "bucketName": "raw-zone",
+        "fileName": "={{ $json.path }}",
+        "binaryData": false,
+        "fileContent": "={{ $json.content }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.s3",
+      "typeVersion": 1,
+      "position": [
+        416,
+        224
+      ],
+      "id": "1f8cd003-d89f-4e1e-8dac-c5848134c7ab",
+      "name": "Upload a file1",
+      "credentials": {
+        "s3": {
+          "id": "Yw4mAGKnpRGX9NbQ",
+          "name": "S3 account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "queue": "madrid-raw",
+        "sendInputData": false,
+        "message": "={{ JSON.stringify($('Code in JavaScript2').item.json) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.rabbitmq",
+      "typeVersion": 1.1,
+      "position": [
+        624,
+        224
+      ],
+      "id": "d6e8622d-15a0-46f6-af0b-ffd83e2e3b7f",
+      "name": "RabbitMQ1",
+      "credentials": {
+        "rabbitmq": {
+          "id": "VnypiDdsnXfnFUdu",
+          "name": "RabbitMQ account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 1
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -432,
+        0
+      ],
+      "id": "38c1edaf-d478-4b24-882c-7ec84c3bb51c",
+      "name": "Schedule Trigger"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "HTTP Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Upload a file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload a file": {
+      "main": [
+        [
+          {
+            "node": "RabbitMQ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request1": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "Upload a file1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload a file1": {
+      "main": [
+        [
+          {
+            "node": "RabbitMQ1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "90619765-c58a-4a37-a0b2-9a5f4e2682dd",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "3e3ca4f529a7014cf97e12c28ab00fd71fc89237f21b381d6f493793eb7556be"
+  },
+  "id": "cwCd4dvwpqVDugBX",
+  "tags": []
+}

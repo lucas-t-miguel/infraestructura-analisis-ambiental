@@ -1,0 +1,201 @@
+networks:
+  madrid-net:
+    driver: bridge
+
+volumes:
+  minio_data:
+  n8n_data:
+  postgres_data:
+  warehouse_postgres_data:
+  superset_data:    
+
+services:
+
+  # MINIO — DATA LAKE
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - madrid-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # MINIO-INIT — CREACIÓN DE BUCKETS
+  minio-init:
+    image: minio/mc:latest
+    container_name: minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      echo 'Esperando a MinIO...';
+      mc alias set local http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD};
+      mc mb --ignore-existing local/raw-zone;
+      mc mb --ignore-existing local/clean-zone;
+      mc mb --ignore-existing local/curated-zone;
+      mc anonymous set public local/raw-zone;
+      mc anonymous set public local/clean-zone;
+      mc anonymous set public local/curated-zone;
+      echo 'Buckets creados correctamente';
+      "
+    networks:
+      - madrid-net
+
+  # POSTGRESQL — BASE DE DATOS DE N8N
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres-n8n
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - madrid-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # N8N — WORKFLOWS
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD}
+      WEBHOOK_URL: http://localhost:${N8N_PORT:-5678}/
+      GENERIC_TIMEZONE: Europe/Madrid
+      TZ: Europe/Madrid
+      N8N_USER_FOLDER: /home/node/.n8n
+    ports:
+      - "${N8N_PORT:-5678}:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/home/node/.n8n/workflows
+    networks:
+      - madrid-net
+    restart: unless-stopped
+
+  # RABBITMQ — COLA DE MENSAJES
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    networks:
+      - madrid-net
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+  
+  # RABBITMQ-INIT — CREACIÓN DE COLAS
+  rabbitmq-init:
+    image: rabbitmq:3-management
+    container_name: rabbitmq-init
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - madrid-net
+    entrypoint: >
+      /bin/sh -c "
+      rabbitmqadmin declare queue --host=rabbitmq name=openmeteo-raw durable=true;
+      rabbitmqadmin declare queue --host=rabbitmq name=madrid-raw durable=true;
+      echo 'Colas creadas correctamente';
+      "
+
+  # POSTGRESQL — DATA WAREHOUSE
+  warehouse-postgres:
+    image: postgres:15-alpine
+    container_name: warehouse-postgres
+    environment:
+      POSTGRES_USER: ${WAREHOUSE_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${WAREHOUSE_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${WAREHOUSE_POSTGRES_DB}
+    ports:
+      - "${WAREHOUSE_POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - warehouse_postgres_data:/var/lib/postgresql/data
+      - ./postgres/init_datawarehouse.sql:/docker-entrypoint-initdb.d/01-init_datawarehouse.sql
+    networks:
+      - madrid-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${WAREHOUSE_POSTGRES_USER} -d ${WAREHOUSE_POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  # ADMINER — INTERFAZ WEB SQL
+  adminer:
+    image: adminer:latest
+    container_name: adminer
+    ports:
+      - "8080:8080"
+    networks:
+      - madrid-net
+    depends_on:
+      warehouse-postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # APACHE SUPERSET — DASHBOARD DE VISUALIZACIÓN
+  superset:
+    build: .
+    container_name: superset
+    ports:
+      - "8088:8088"
+    environment:
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:-superset_madrid}
+      WAREHOUSE_POSTGRES_USER: ${WAREHOUSE_POSTGRES_USER}
+      WAREHOUSE_POSTGRES_PASSWORD: ${WAREHOUSE_POSTGRES_PASSWORD}
+      WAREHOUSE_POSTGRES_DB: ${WAREHOUSE_POSTGRES_DB}
+    networks:
+      - madrid-net
+    volumes:
+      - ./superset_config.py:/app/superset/superset_config.py
+      - superset_data:/app/superset_home
+    depends_on:
+      warehouse-postgres:
+        condition: service_healthy
+    command: >
+      bash -c "pip install psycopg2-binary &&
+      superset db upgrade &&
+      superset fab create-admin --username admin --firstname Admin --lastname User --email admin@superset.com --password admin &&
+      superset init &&
+      superset run -p 8088 --host=0.0.0.0"
+    restart: unless-stopped

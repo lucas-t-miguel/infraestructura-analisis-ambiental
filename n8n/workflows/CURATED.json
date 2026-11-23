@@ -1,0 +1,191 @@
+{
+  "name": "Curated",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "97b55979-a5b6-4962-bebf-f08bbf74f14a",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "jsCode": "const yesterday = new Date();\nyesterday.setDate(yesterday.getDate() - 1);\nconst date = yesterday.toISOString().split('T')[0]; // \"2026-05-07\"\nconst dateForFile = date.replace(/-/g, '_');         // \"2026_05_07\"\n\nconst parts = date.split('-');\nconst curatedPath = `${parts[0]}/${parts[1]}/${parts[2]}/datos.csv`; // \"2026/05/07/datos.csv\"\n\nreturn [{\n  json: { date, dateForFile, curatedPath }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "46bd6a13-43b3-464c-94f8-35b6178b94c8",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "url": "=http://minio:9000/clean-zone/openmeteo/{{ $json.dateForFile }}.json",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        416,
+        -112
+      ],
+      "id": "c0be1dcb-e1e1-4b1a-82fc-97231ef91a1e",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "url": "=http://minio:9000/clean-zone/madrid/{{ $json.dateForFile }}.json",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        416,
+        96
+      ],
+      "id": "1edb0ad3-6901-40af-a5c8-7570f2cc57ac",
+      "name": "HTTP Request1"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        672,
+        0
+      ],
+      "id": "741b4501-f882-495b-b9ae-c1a295fd4d22",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "const all = $input.all();\n\n// item 0 = HTTP Request (OpenMeteo), item 1 = HTTP Request1 (Madrid)\nconst omData = JSON.parse(all[0].json.data);\nconst madData = JSON.parse(all[1].json.data);\n\n// Mapa hora -> fila openmeteo\nconst omByHour = {};\nomData.forEach(row => {\n  const hour = row.datetime.substring(11, 13);\n  omByHour[hour] = row;\n});\n\n// Cabecera CSV\nconst csvHeaders = [\n  'fecha', 'hora',\n  'temperatura_c', 'humedad_pct', 'viento_kmh',\n  'presion_hpa', 'precipitacion_mm',\n  'madrid_magnitud', 'madrid_estacion'\n];\n\nconst csvRows = [csvHeaders.join(',')];\n\nfor (let h = 0; h < 24; h++) {\n  const hourStr = String(h).padStart(2, '0');\n  const om = omByHour[hourStr] ?? {};\n  const madKey = `H${String(h + 1).padStart(2, '0')}`;\n  const mad = madData[0] ?? {};\n\n  const row = [\n    om.date ?? '',\n    hourStr,\n    om.temperature_2m ?? '',\n    om.relative_humidity_2m ?? '',\n    om.windspeed_10m ?? '',\n    om.surface_pressure ?? '',\n    om.precipitation ?? '',\n    mad.MAGNITUD ?? '',\n    mad.ESTACION ?? ''\n  ];\n\n  csvRows.push(row.join(','));\n}\n\n// Ruta curated\nconst yesterday = new Date();\nyesterday.setDate(yesterday.getDate() - 1);\nconst parts = yesterday.toISOString().split('T')[0].split('-');\nconst curatedPath = `${parts[0]}/${parts[1]}/${parts[2]}/datos.csv`;\n\nreturn [{\n  json: {\n    path: curatedPath,\n    content: csvRows.join('\\n')\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        848,
+        0
+      ],
+      "id": "26367f0a-fdb6-4a45-8a79-32f5f564881a",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "bucketName": "curated-zone",
+        "fileName": "={{ $json.path }}",
+        "binaryData": false,
+        "fileContent": "={{ $json.content }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.s3",
+      "typeVersion": 1,
+      "position": [
+        1056,
+        0
+      ],
+      "id": "70352f1a-931f-4142-870f-fd5daa0bb1fb",
+      "name": "Upload a file",
+      "credentials": {
+        "s3": {
+          "id": "1wUY8SSMwb4AmOE3",
+          "name": "S3 account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "HTTP Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request1": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Upload a file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "c7862eea-10e9-459c-89f6-534b5eeb4a6a",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "724e476bc2b343244a2ec56d4f5abc230310acf8f7c8074150195de4373cde0f"
+  },
+  "id": "hE0NWeciL11rIOnH",
+  "tags": []
+}
